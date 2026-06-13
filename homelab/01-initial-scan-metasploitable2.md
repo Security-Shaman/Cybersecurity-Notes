@@ -6,9 +6,9 @@
 - Network: VirtualBox NAT Network "SecurityLab"
 
 ## Reconnaissance
-\`\`\`
+```
 nmap -sV 10.10.10.4
-\`\`\`
+```
 
 ## Findings
 23 open ports identified. Notable services:
