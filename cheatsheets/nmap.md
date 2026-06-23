@@ -161,7 +161,7 @@ safe, version, vuln
 
 ```bash
 # Run default scripts + version detection (common combo)
-nmap -sC -sV 10.10.10.4
+nmap -sCV 10.10.10.4
 
 # Vulnerability scanning
 nmap --script vuln 10.10.10.4
@@ -183,6 +183,19 @@ nmap --script ftp-anon -p 21 10.10.10.4
 
 # Sniffer detection
 nmap --script sniffer-detect 10.10.10.4
+
+# finding scripts 
+ls /usr/share/nmap/scripts/ | grep <keyword>
+
+# Script Information
+nmap --script-help <script.nse>
+
+# Uploading new scripts
+sudo cp /its/path/<custom-scripts.nse> /usr/share/nmap/scripts/ 
+
+# Updating Script Database
+sudo nmap --script-updatedb
+
 ```
 
 ---
