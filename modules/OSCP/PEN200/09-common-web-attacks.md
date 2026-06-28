@@ -20,10 +20,39 @@ http://192.168.247.16/meteor/index.php?page=admin.php?../../../../../../../../..
 ```
 
 ---
+### Important Directories (Windows)
+
+
+```bash
+C:\Users\<username>\Desktop
+
+C:\Users\<username>\Documents
+
+C:\Users\<username>\.ssh\id_rsa
+
+C:\Users\<username>\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt  # PowerShell history
+
+C:\Windows\System32\drivers\etc\hosts
+
+C:\Windows\System32\config\SAM  # Password hashes (needs SYSTEM)
+
+C:\Windows\System32\config\SYSTEM
+
+C:\xampp\htdocs\  # Web app files
+
+C:\Inetpub\wwwroot\  # IIS web root
+
+C:\Program Files\
+
+C:\Program Files (x86)\
+```
+
+---
 
 
 ### Important Directories (Linux)
 
+```bash
 /etc/passwd             # User accounts and home directories
 
 /etc/shadow             # Hashed passwords (needs root)
@@ -41,7 +70,7 @@ http://192.168.247.16/meteor/index.php?page=admin.php?../../../../../../../../..
 /proc/self/environ      # Environment variables — may contain secrets
 
 /.env                   # App environment file — API keys, passwords
-
+```
 
 ---
 
