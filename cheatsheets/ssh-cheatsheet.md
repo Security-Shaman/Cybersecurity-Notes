@@ -144,3 +144,21 @@ dos2unix --help      # Line ending conversion
 Online references:
 - [SSH man page](https://man.openbsd.org/ssh)
 - [HackTricks - SSH](https://book.hacktricks.xyz/network-services-pentesting/pentesting-ssh)
+
+---
+
+## More information
+
+Private key (no extension, e.g. id_rsa) — stays with you, the person trying to authenticate. Never shared.
+
+Public key (.pub extension, e.g. id_rsa.pub) — goes onto the target machine, specifically into ~/.ssh/authorized_keys.
+
+So the flow for using your own generated key pair to gain persistent SSH access:
+
+You generate the key pair on Kali
+You take the public key and place it into the target's authorized_keys file
+You connect using your private key — ssh -i id_rsa user@target
+
+The server checks: does this private key match any public key in my authorized_keys? If yes, you're in — no password needed.
+
+This is actually a really useful persistence technique once you have a shell — generate a key pair, drop your public key into authorized_keys, and you have guaranteed SSH access even if your original foothold gets patched.
