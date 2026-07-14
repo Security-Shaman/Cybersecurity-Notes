@@ -21,6 +21,8 @@ fingerprinting and enumeration
 
 inside the cheatsheet
 
+---
+
 
 ## 6.4.4 SMB Enumeration
 
@@ -30,6 +32,48 @@ Port number : 445, 139
 - enum4linux : enumerates linux IPs
 - -a : aggressively enumerates through the IP
 
+**SMB enumeration commands:**
+
+**List shares:**
+```bash
+smbclient -L //<target_ip> -N
+```
+`-N` means no password (anonymous/null session)
+
+**Connect to a share:**
+```bash
+smbclient //<target_ip>/share_name -N
+```
+
+**Enumerate users, shares, and OS info:**
+```bash
+enum4linux -a <target_ip>
+```
+
+**Nmap SMB scripts:**
+```bash
+nmap --script smb-enum-shares,smb-enum-users,smb-os-discovery -p 445 <target_ip>
+```
+
+**Check for known vulnerabilities:**
+```bash
+nmap --script smb-vuln* -p 445 <target_ip>
+```
+
+**CrackMapExec (quick overview):**
+```bash
+crackmapexec smb <target_ip>
+crackmapexec smb <target_ip> --shares
+crackmapexec smb <target_ip> --users
+```
+
+**Priority order:**
+1. `smbclient -L` — check for anonymous access first
+2. `enum4linux -a` — broad enumeration
+3. `nmap smb-vuln*` — check for EternalBlue and other known exploits
+4. If you find a share — browse it for credentials, config files, or sensitive data
+
+---
 
 ## 6.4.5 SMTP enumeration
 
@@ -47,6 +91,7 @@ EXPN username        # expand mailing list
 smtp-user-enum -M VRFY -U /usr/share/wordlists/metasploit/unix_users.txt -t ip.addr
 ```
 
+---
 
 ## 6.4.6 SNMP enumeration
 

